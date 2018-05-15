@@ -40,6 +40,9 @@ type jsonMap map[string]interface{}
 // Predicate is an alias for func(interface{}) bool used to test for inclusion
 type Predicate func(interface{}) bool
 
+// Predicate is an alias for func(string, interface{}) bool used to test for inclusion
+type PredicateWithKey func(string, interface{}) bool
+
 // KeyConverter is an alias for func(string) string used to transform keys
 type KeyConverter func(string) string
 
@@ -66,6 +69,8 @@ type Serializer interface {
 	AddIf(predicate Predicate, key string, value interface{}) Serializer
 	AddFunc(key string, converter ValueConverter) Serializer
 	AddFuncIf(predicate Predicate, key string, converter ValueConverter) Serializer
+	Recursive() Serializer
+	RecursiveIf(p PredicateWithKey) Serializer
 }
 
 func alwaysTrue(u interface{}) bool {
@@ -73,6 +78,14 @@ func alwaysTrue(u interface{}) bool {
 }
 
 func alwaysFalse(u interface{}) bool {
+	return false
+}
+
+func alwaysTrueRecursive(key string, u interface{}) bool {
+	return true
+}
+
+func alwaysFalseRecursive(key string, u interface{}) bool {
 	return false
 }
 
@@ -86,12 +99,14 @@ type Base struct {
 	modifiers    []mapModifier
 	reflected    reflect.Value
 	keyConverter KeyConverter
+	recursivePredicate PredicateWithKey
 }
 
 // New creates a new serializer
 func New() *Base {
 	b := &Base{}
 	b.addDefaultKeyConverter()
+	b.setNeverRecursivePredicate()
 	return b
 }
 
@@ -99,7 +114,55 @@ func New() *Base {
 func (b *Base) Transform(entity interface{}) map[string]interface{} {
 	b.raw = entity
 	b.reflected = reflect.Indirect(reflect.ValueOf(entity))
-	return b.result()
+	return b.transformRecursive(b.result())
+}
+
+func (b *Base) transformRecursive(items map[string]interface{}) map[string]interface{} {
+	result := make(map[string]interface{})
+	for key, value := range items {
+		if b.recursivePredicate(key, value) {
+			result[key] = b.transformRecursiveValue(value)
+		} else {
+			result[key] = value
+		}
+	}
+	return result
+}
+
+func (b *Base) transformMap(reflectValue reflect.Value) interface{} {
+	result := make(map[interface{}]interface{})
+	for _, key := range reflectValue.MapKeys() {
+		result[key.Interface()] = b.transformRecursiveValue(reflectValue.MapIndex(key).Interface())
+	}
+	return result
+}
+
+func (b *Base) transformArray(reflectValue reflect.Value) interface{} {
+	length := reflectValue.Len()
+	result := make([]interface{}, length)
+	for key := 0; key < length; key++ {
+		result[key] = b.transformRecursiveValue(reflectValue.Index(key).Interface())
+	}
+	return result
+}
+
+func (b *Base) transformRecursiveValue(value interface {}) interface {} {
+	reflectValue := reflect.ValueOf(value)
+	reflectType := reflectValue.Kind()
+	switch reflectType {
+	case reflect.Array:
+		return b.transformArray(reflectValue)
+	case reflect.Slice:
+		return b.transformArray(reflectValue)
+	case reflect.Struct:
+		return b.Transform(value)
+	case reflect.Map:
+		return b.transformMap(reflectValue)
+	case reflect.Ptr:
+		return b.Transform(*(value.(*interface{})))
+	default:
+		return value
+	}
 }
 
 // TransformArray transforms the entities into a []map[string]interface{} array
@@ -137,6 +200,10 @@ func (b *Base) addDefaultKeyConverter() {
 	default:
 		break
 	}
+}
+
+func (b *Base) setNeverRecursivePredicate() {
+	b.recursivePredicate = alwaysFalseRecursive
 }
 
 func (b *Base) transformedResult(result jsonMap) jsonMap {
@@ -260,5 +327,16 @@ func (b *Base) AddFuncIf(p Predicate, key string, f ValueConverter) Serializer {
 		}
 		return m
 	})
+	return b
+}
+
+// Sets recursive mode for all items
+func (b *Base) Recursive() Serializer {
+	return b.RecursiveIf(alwaysTrueRecursive)
+}
+
+// Sets recursive mode for items that matched predicate
+func (b *Base) RecursiveIf(p PredicateWithKey) Serializer {
+	b.recursivePredicate = p
 	return b
 }

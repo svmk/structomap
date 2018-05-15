@@ -3,7 +3,7 @@ package structomap
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/tuvistavie/testify/assert"
+	"github.com/stretchr/testify/assert"
 	"testing"
 	"time"
 )
@@ -290,5 +290,46 @@ func TestCustomSerializer(t *testing.T) {
 	m := NewCustomSerializer().WithPrivateinfo().WithBasicInfo().Transform(user)
 	for _, field := range []string{"ID", "FirstName", "LastName", "Email"} {
 		assert.Contains(t, m, field)
+	}
+}
+
+func TestRecursive(t *testing.T) {
+	type InterfaceValue interface {
+
+	}
+	type Item struct {
+		Value string
+	}
+	type Container struct {
+		Item Item
+		ItemPtr *Item
+		Items []Item
+		ItemPtrs []*Item
+		Strings []string
+		Ints []int
+		Interfaces []InterfaceValue
+	}
+	data := Container{
+		Item: Item{Value:"Some value"},
+		ItemPtr: &Item{Value:"Some value for ptr"},
+		Items: []Item{
+			Item {Value:"Array value 1"},
+			Item {Value:"Array value 2"},
+		},
+		ItemPtrs: []*Item {
+			&Item {Value:"Array ptr value 1"},
+			&Item {Value:"Array ptr value 2"},
+		},
+		Strings: []string {"one", "two", "three"},
+		Ints: []int {4, 8, 15, 16, 23, 42},
+		Interfaces: []InterfaceValue {
+			Item {Value: "interface one"},
+			Item {Value: "interface two"},
+		},
+	}
+	m:= New().PickAll().Recursive().Transform(data)
+	keys := []string {"Item", "Itemptr", "Items", "Itemptrs", "Strings", "Ints", "Interfaces"}
+	for _, key := range keys {
+		assert.Contains(t, m, key)
 	}
 }
